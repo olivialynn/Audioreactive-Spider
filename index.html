@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Audioreactive Spider</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: #0a0a0f; overflow: hidden; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; }
+
+    /* Start overlay: a mic needs a user gesture + a secure context (localhost is fine). */
+    #start {
+      position: fixed; inset: 0; z-index: 10;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px; background: radial-gradient(circle at 50% 40%, #16161f, #0a0a0f);
+      font-family: ui-sans-serif, system-ui, sans-serif; color: #e8e8f0; text-align: center;
+    }
+    #start h1 { font-size: 1.6rem; font-weight: 600; letter-spacing: 0.02em; }
+    #start p { color: #9a9ab0; max-width: 32ch; line-height: 1.5; }
+    #start button {
+      margin-top: 8px; padding: 12px 28px; font-size: 1rem; font-weight: 600;
+      color: #0a0a0f; background: #c7b3ff; border: none; border-radius: 999px; cursor: pointer;
+    }
+    #start button:hover { background: #d8c9ff; }
+    #start .err { color: #ff8a8a; min-height: 1.2em; }
+    #start small { color: #6a6a80; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="start">
+    <h1>Audioreactive Spider</h1>
+    <p>A parametric spider that walks with inverse kinematics and dances to sound from your microphone.</p>
+    <button id="start-btn">Enable mic &amp; start</button>
+    <div class="err" id="start-err"></div>
+    <small>Use the panel (top-right) to change the leg count, gait, and audio sensitivity live.</small>
+  </div>
+
+  <!-- No build step: dependencies load as ES modules via this import map. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "lil-gui": "https://unpkg.com/lil-gui@0.19.2/dist/lil-gui.esm.js"
+    }
+  }
+  </script>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

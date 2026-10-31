@@ -1,0 +1,158 @@
+/**
+ * BodyController — the body's position, heading, and "dance."
+ *
+ * Movement model (what makes it read as a creature, not a roomba):
+ *   - It mostly walks FORWARD. Heading changes come from a slowly random-walked
+ *     turn rate, so it veers gently left/right instead of spinning to face new
+ *     targets. Near the edge of its roam area it curves back toward the middle
+ *     (never a sharp U-turn).
+ *   - A walk/dance mode timer occasionally stops it to stand and dance in place,
+ *     then it resumes walking.
+ *
+ * It owns the vertical "dance" too: continuous lift from bass + a springy pop on
+ * each beat. It knows nothing about legs/feet — GaitPlanner reads this body's
+ * pose and makes the feet follow. That decoupling lets the body wobble freely
+ * while the feet stay planted.
+ */
+import * as THREE from 'three';
+
+const UP = new THREE.Vector3(0, 1, 0);
+const _forward = new THREE.Vector3();
+
+export class BodyController {
+  constructor(opts = {}) {
+    this.baseHeight = opts.baseHeight ?? 0.55;
+    this.roamRadius = opts.roamRadius ?? 7;
+
+    // --- movement tunables (see ui/Panel.js) ---
+    this.baseSpeed = opts.baseSpeed ?? 0.8;  // forward speed when quiet
+    this.audioSpeed = opts.audioSpeed ?? 1.0; // extra forward speed scaled by loudness
+    this.maxTurn = opts.maxTurn ?? 0.6;      // rad/s — how sharply it veers
+    this.pauseToDance = opts.pauseToDance ?? true; // stop & dance occasionally
+    this.pauseDance = opts.pauseDance ?? false;    // freeze the dance reaction entirely
+
+    // --- dance tunables ---
+    this.bobAmount = opts.bobAmount ?? 0.2; // continuous lift from bass
+    this.beatPop = opts.beatPop ?? 3.0;     // impulse added to bob on a beat
+
+    // --- state ---
+    this.position = new THREE.Vector3(0, this.baseHeight, 0);
+    this.quaternion = new THREE.Quaternion();
+    this.heading = Math.random() * Math.PI * 2;
+    this.velDir = new THREE.Vector3(1, 0, 0); // direction * speed-fraction (for gait)
+    this.speed = 0;
+
+    // wander: a random-walked turn rate that decays back toward straight
+    this._turn = 0;
+    this._turnJitter = 2.0;
+    this._turnDamping = 1.2;
+    this._centeringGain = 1.6;
+
+    // walk/dance mode timer
+    this.mode = 'walk';
+    this._modeTimer = rand(5, 10);
+
+    // vertical spring for the bob/pop
+    this._bobPos = 0;
+    this._bobVel = 0;
+    this._stiffness = 90;
+    this._damping = 9;
+  }
+
+  update(dt, bus) {
+    this._updateMode(dt, bus);
+    this._updateHeading(dt);
+    this._updateMovement(dt, bus);
+    this._updateDance(dt, bus);
+  }
+
+  _updateMode(dt, bus) {
+    this._modeTimer -= dt;
+    if (this._modeTimer > 0) return;
+    if (this.mode === 'walk') {
+      // Only pause to dance if enabled, not globally paused, and there's sound.
+      if (this.pauseToDance && !this.pauseDance && bus.level > 0.03) {
+        this.mode = 'dance';
+        this._modeTimer = rand(2.5, 5);
+      } else {
+        this._modeTimer = rand(4, 8); // keep walking, re-check later
+      }
+    } else {
+      this.mode = 'walk';
+      this._modeTimer = rand(6, 12);
+    }
+  }
+
+  _updateHeading(dt) {
+    // Random-walk the turn rate -> gentle veering, not U-turns.
+    this._turn += (Math.random() * 2 - 1) * this._turnJitter * dt;
+    this._turn -= this._turn * this._turnDamping * dt;
+    this._turn = clamp(this._turn, -this.maxTurn, this.maxTurn);
+
+    let turn = this._turn;
+
+    // Near the edge of the roam area, steer back toward the center. The strength
+    // ramps up with distance so it curves back gradually instead of snapping.
+    const dist = Math.hypot(this.position.x, this.position.z);
+    const edge = smoothstep(this.roamRadius * 0.6, this.roamRadius, dist);
+    if (edge > 0) {
+      const headingToCenter = Math.atan2(this.position.z, -this.position.x);
+      turn += angleDiff(headingToCenter, this.heading) * this._centeringGain * edge;
+    }
+
+    this.heading += turn * dt;
+    this.quaternion.setFromAxisAngle(UP, this.heading);
+    _forward.set(1, 0, 0).applyQuaternion(this.quaternion);
+  }
+
+  _updateMovement(dt, bus) {
+    // Ease speed toward its target so stops/starts are smooth (0 when dancing).
+    const targetSpeed = this.mode === 'dance' ? 0 : this.baseSpeed + this.audioSpeed * bus.level;
+    this.speed += (targetSpeed - this.speed) * (1 - Math.exp(-3 * dt));
+    this.position.addScaledVector(_forward, this.speed * dt);
+
+    // velDir carries direction * speed-fraction so foot step-overshoot (in the
+    // gait planner) scales with pace and vanishes when standing still.
+    const frac = clamp(this.speed / (this.baseSpeed + this.audioSpeed), 0, 1);
+    this.velDir.copy(_forward).multiplyScalar(frac);
+  }
+
+  _updateDance(dt, bus) {
+    // When paused, settle to a calm resting height and ignore beats.
+    if (this.pauseDance) {
+      this._bobVel = 0;
+      this._bobPos *= Math.exp(-6 * dt);
+      this.position.y = this.baseHeight + this._bobPos;
+      return;
+    }
+
+    // Damped spring pulls the bob back to 0; each beat kicks it up so it bounces.
+    const accel = -this._stiffness * this._bobPos - this._damping * this._bobVel;
+    this._bobVel += accel * dt;
+    if (bus.beat) this._bobVel += this.beatPop * (0.5 + 0.5 * bus.beatEnergy);
+    this._bobPos += this._bobVel * dt;
+
+    const continuousBob = bus.bands.bass * this.bobAmount;
+    this.position.y = this.baseHeight + this._bobPos + continuousBob;
+  }
+
+  get pose() {
+    return { position: this.position, quaternion: this.quaternion };
+  }
+}
+
+function rand(a, b) { return a + Math.random() * (b - a); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function smoothstep(e0, e1, x) {
+  const t = clamp((x - e0) / (e1 - e0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+/** Smallest signed angle a - b, wrapped to [-pi, pi]. */
+function angleDiff(a, b) {
+  let d = (a - b) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
