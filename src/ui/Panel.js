@@ -351,6 +351,7 @@ function injectTypeSwitchStyle() {
     }
     .creature-switch button {
       flex: 1;
+      height: 100%;
       cursor: pointer;
       padding: 7px 4px;
       font: inherit;

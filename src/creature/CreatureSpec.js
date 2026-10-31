@@ -156,18 +156,24 @@ export function makeSpider(opts = {}) {
  * skeleton — plain limbs, a small eye set, markings off.
  */
 export function makeAngel(opts = {}) {
-  const legCount = opts.legCount ?? 12;        // angels have MANY limbs
+  const legCount = opts.legCount ?? 6;         // six wing-limbs by default
   const bodyScale = opts.bodyScale ?? 1;
   const bodyHeight = opts.bodyHeight ?? 0.5;   // same stance as the spider
   const legLength = opts.legLength ?? 1;
   const kneeFrac = opts.kneeFrac ?? 0.55;      // high knees -> legs arch up like furled wings
   const sprawl = opts.sprawl ?? 1;
   const bow = opts.bow ?? 0.4;
-  const legColor = opts.legColor ?? 0xe9d8a6;
-  const bodyColor = opts.bodyColor ?? 0xb5a16b;
+  // Same default palette as the spider (and the shared panel presets apply to both).
+  const legColor = opts.legColor ?? 0xc7b3ff;
+  const bodyColor = opts.bodyColor ?? 0x6b5bb5;
   const style = opts.toon ? 'toon' : 'physical';
-  // No leg hairs on the angel — feathers (a later step) take their place.
+  // No leg hairs on the angel — feathers take their place (its "wings").
   const hairs = { enabled: false, density: 1, length: 1 };
+  const feathers = {
+    enabled: opts.feathers !== false,
+    density: opts.featherDensity ?? 1,
+    length: opts.featherLength ?? 1,
+  };
 
   // Longer, slenderer legs than the spider; same two-segment checkmark.
   const totalLeg = 2.8 * legLength;
@@ -191,16 +197,66 @@ export function makeAngel(opts = {}) {
     scale: { x: 1.0, y: 1.0, z: 1.0 }, detail, taper: { front: 1.0, back: 1.0 },
   };
 
+  // One giant eye set into the DORSAL (top) surface of the sphere, gazing straight
+  // up. It's a flat, almond-shaped lidded eye whose corners point fore/aft, layered
+  // (sclera/iris/pupil) and audio-reactive (pupil dilates, sclera glows). Later
+  // steps add smaller eyes on the knees and torso.
+  const features = [{
+    type: 'eye',
+    shape: 'almond',
+    offset: { x: 0, y: 0.36 * s, z: 0 }, // recessed into the top of the sphere
+    radius: 0.28 * s,                     // big, but sunk so the body still reads
+    look: { x: 0, y: 1, z: 0 },           // gaze straight up
+    cornerAxis: { x: 1, y: 0, z: 0 },     // corners point to head (+x) and rear (-x)
+    lids: true,
+    lidInner: 0.3, // opening half-width (sin) -> a narrow almond, not a wide dome
+    lidOuter: 1.0, // opening half-length (corner reach)
+    iris: 0.5,     // iris cap half-angle (radians)
+    pupil: 0.26,   // pupil cap half-angle (dilates with the audio)
+    reactive: true,
+  }];
+
+  // Torso eyes: smaller lidded almond eyes scattered over the sphere, each gazing
+  // radially outward (socketed into the body). Two staggered rings below the giant
+  // dorsal eye — "covered in eyes." cornerAxis is the horizontal tangent (up × dir),
+  // so the almonds read roughly level.
+  const torsoEye = (az, el) => {
+    const ce = Math.cos(el);
+    const dx = ce * Math.cos(az), dy = Math.sin(el), dz = ce * Math.sin(az);
+    const cl = Math.hypot(dz, dx) || 1; // horizontal tangent = up × dir = (dz, 0, -dx)
+    features.push({
+      type: 'eye', shape: 'almond', lids: true,
+      offset: { x: sphere.offset.x + dx * sphere.radius, y: sphere.offset.y + dy * sphere.radius, z: sphere.offset.z + dz * sphere.radius },
+      radius: 0.08 * s,
+      look: { x: dx, y: dy, z: dz },
+      cornerAxis: { x: dz / cl, y: 0, z: -dx / cl },
+      lidInner: 0.32, lidOuter: 1.0, iris: 0.6, pupil: 0.33, reactive: true,
+    });
+  };
+  const TAU = Math.PI * 2;
+  for (let i = 0; i < 5; i++) torsoEye(TAU * (i / 5) + 0.3, 0.34);          // upper ring
+  for (let i = 0; i < 5; i++) torsoEye(TAU * (i / 5) + 0.3 + TAU / 10, -0.4); // lower ring, staggered
+
   return {
     kind: 'angel',
     name: `angel-${legCount}`,
     style,
     hairs,
+    feathers,
     marking: { type: MARK_TYPES.none, strength: 0, scale: 1 }, // markings off
     bump: opts.microBump ?? 1.5,
     body: { height: bodyHeight, color: bodyColor, segments: [sphere] },
+    // The ophanim's wheel: a slim hollow-cylinder band (flat top/bottom) around the
+    // torso, pierced with almond (vesica) holes, each with a floating iris disc, and
+    // spinning about its own axis. `spin` is radians/sec; a slight `tilt` gives depth.
+    ring: {
+      center: { x: 0, y: 0.1 * s, z: 0 }, // the sphere's center
+      inner: 0.74 * s, outer: 0.84 * s, height: 0.18 * s,
+      tilt: 0.12, spin: 0.7,
+      holes: { count: 7, len: 0.24 * s, ht: 0.12 * s, iris: 0.032 * s },
+    },
     limbs,
-    features: [], // the giant eye goes here in a later step
+    features,
   };
 }
 

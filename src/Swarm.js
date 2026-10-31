@@ -44,12 +44,13 @@ function randomSpiderOpts(toon) {
 
 /** Random spec options for an angel extra — pale/ethereal palette, many legs. */
 function randomAngelOpts(toon) {
+  // Same palette ranges as the spider extras (dark body, saturated accent).
   const h1 = Math.random();
-  const h2 = (h1 + rand(-0.1, 0.1) + 1) % 1;
-  const main = new THREE.Color().setHSL(h1, rand(0.15, 0.4), rand(0.3, 0.5));
-  const accent = new THREE.Color().setHSL(h2, rand(0.2, 0.5), rand(0.6, 0.82));
+  const h2 = (h1 + rand(-0.15, 0.15) + 1) % 1;
+  const main = new THREE.Color().setHSL(h1, rand(0.4, 0.7), rand(0.08, 0.16));
+  const accent = new THREE.Color().setHSL(h2, rand(0.6, 0.9), rand(0.5, 0.65));
   return {
-    legCount: pick([10, 12, 14]),
+    legCount: pick([4, 6, 8]),
     bodyScale: rand(0.8, 1.4),
     bodyHeight: rand(0.6, 0.9),
     legLength: rand(0.9, 1.6),

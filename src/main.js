@@ -12,7 +12,7 @@ import { createScene } from './render/Scene.js';
 import { FollowCamera } from './render/FollowCamera.js';
 import { ControlBus } from './input/ControlBus.js';
 import { AudioDriver } from './input/AudioDriver.js';
-import { makeSpider } from './creature/CreatureSpec.js';
+import { makeSpider, makeAngel } from './creature/CreatureSpec.js';
 import { Swarm } from './Swarm.js';
 import { createPanel } from './ui/Panel.js';
 
@@ -22,10 +22,13 @@ const { scene, camera, renderer, controls, composer, bloomPass, outlinePass, key
 // --- Input + creatures ---
 const bus = new ControlBus();
 const audio = new AudioDriver(bus);
-const swarm = new Swarm(scene, makeSpider({ legCount: 8 })); // hero + (later) extras
+// DEV MODE: start as an angel (prod default is makeSpider({ legCount: 8 })).
+const swarm = new Swarm(scene, makeAngel({ legCount: 6 })); // hero + (later) extras
+void makeSpider; // prod default, kept imported for the dev-mode toggle
 
 // --- Camera rig ---
-const follow = new FollowCamera(camera);
+// DEV MODE: follow + orbit off (prod default is enabled). Revert: drop the opt.
+const follow = new FollowCamera(camera, { enabled: false });
 
 // --- Key-light rig: the spotlight can ride along above the spider so the lit
 // pool follows it. `offset` is its position relative to the tracked point;

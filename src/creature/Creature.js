@@ -113,6 +113,12 @@ export class Creature {
     // Constant emissive glow across all materials.
     for (const m of this.render.materials) m.emissiveIntensity = this.glow;
 
+    // Audio-reactive eyes (angel): pupils dilate / sclera glows with the audio.
+    this.render.updateEyes(bus, dt);
+
+    // Spin the torso ring (ophanim wheel), if present.
+    if (this.render.ringSpin) this.render.ringSpin.rotation.y += (this.spec.ring?.spin ?? 0) * dt;
+
     // 2. Feet decide where/when to step. Dancing in a ring uses an easier
     //    threshold so the small shuffle still lifts feet.
     const thr = (this.body.arrangement === 'circle' && this.gait.easySteps)
