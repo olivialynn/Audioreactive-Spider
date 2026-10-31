@@ -17,7 +17,7 @@ import { Creature } from './creature/Creature.js';
 import { createPanel } from './ui/Panel.js';
 
 const container = document.getElementById('app');
-const { scene, camera, renderer, controls } = createScene(container);
+const { scene, camera, renderer, controls, composer, bloomPass, outlinePass, keyLight, fillLight } = createScene(container);
 
 // --- Input + creature ---
 const bus = new ControlBus();
@@ -27,11 +27,24 @@ const creature = new Creature(scene, makeSpider({ legCount: 8 }));
 // --- Camera rig ---
 const follow = new FollowCamera(camera);
 
+// --- Key-light rig: the spotlight can ride along above the spider so the lit
+// pool follows it. `offset` is its position relative to the tracked point;
+// offset.y is the "height" exposed in the Lighting panel. ---
+const lightRig = { follow: true, offset: new THREE.Vector3(5, 7.5, 4) };
+// The fill point light always rides near the spider (offset in world space).
+const fillRig = { offset: new THREE.Vector3(-2.5, 5, -3) };
+
 // --- UI ---
 const panel = createPanel({
   creature,
   audio,
   follow,
+  renderer,
+  bloomPass,
+  outlinePass,
+  keyLight,
+  lightRig,
+  fillLight,
   onRebuild: (spec) => creature.rebuild(spec),
 });
 
@@ -44,6 +57,17 @@ function tick() {
   audio.update(dt);       // mic -> ControlBus (no-op until started)
   creature.update(dt, bus); // ControlBus -> motion
   panel.syncMeters(bus);
+
+  // Key spotlight rides above the spider (or stays over the origin).
+  const c = creature.body.position;
+  const bx = lightRig.follow ? c.x : 0;
+  const bz = lightRig.follow ? c.z : 0;
+  keyLight.position.set(bx + lightRig.offset.x, lightRig.offset.y, bz + lightRig.offset.z);
+  keyLight.target.position.set(bx, 0.5, bz);
+  keyLight.target.updateMatrixWorld();
+
+  // Fill light always tracks the spider.
+  fillLight.position.set(c.x + fillRig.offset.x, fillRig.offset.y, c.z + fillRig.offset.z);
 
   // Camera: the smoothed focus tracks the spider in both modes. In follow mode
   // the rig drives the camera; otherwise OrbitControls does (manual inspect),
@@ -58,7 +82,7 @@ function tick() {
     controls.update();
   }
 
-  renderer.render(scene, camera);
+  composer.render();
 }
 tick();
 

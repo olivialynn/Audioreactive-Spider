@@ -28,6 +28,10 @@ export class Creature {
     // controls bound to them stay valid when the creature is rebuilt.
     this.body = new BodyController({ baseHeight: spec.body.height });
     this.gait = null;
+
+    // Constant emissive glow (lit up by bloom).
+    this.glow = 0;
+
     this._build(spec);
   }
 
@@ -89,6 +93,9 @@ export class Creature {
     // they already follow the pose via hipWorld(); the body needs it set.)
     this.render.bodyGroup.position.copy(pose.position);
     this.render.bodyGroup.quaternion.copy(pose.quaternion);
+
+    // Constant emissive glow across all materials.
+    for (const m of this.render.materials) m.emissiveIntensity = this.glow;
 
     // 2. Feet decide where/when to step.
     this.gait.update(dt, pose, this.body.velDir);

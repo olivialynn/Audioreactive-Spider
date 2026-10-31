@@ -73,5 +73,15 @@ Per-frame order (in `Creature.update`): **Body** → **Gait** → **IK** → **r
 
 Open the panel (top-right). Beat detection from a room mic is noisy by nature —
 expect to adjust **beat sensitivity** and **band smoothing** per room/song. Good
-first move: play music, raise **bass bob** and **beat pop** to taste, then nudge
+first move: play music, raise **band bob** and **bob attack** to taste, then nudge
 **beat sensitivity** until the pops land on the beat.
+
+## Stretch goals / ideas
+
+- **Procedural abdomen markings** — stripes / hourglass / fresnel pattern in the
+  accent color (the last of the "group 3" surface-detail work; noise bumps, leg
+  hairs and joint spikes are done).
+- **Biblically-accurate-angel creature** — reuses the typed-limb + eyes system:
+  feathery wing-like legs that still step with IK, plus many eyes.
+- **MIDI input.** A `MidiDriver` mirroring `AudioDriver` into the same
+  `ControlBus` (the seam is already there).

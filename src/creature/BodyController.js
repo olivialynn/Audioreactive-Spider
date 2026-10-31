@@ -132,7 +132,9 @@ export class BodyController {
     if (bus.beat) this._bobVel += this.beatPop * (0.5 + 0.5 * bus.beatEnergy);
     this._bobPos += this._bobVel * dt;
 
-    const continuousBob = bus.bands.bass * this.bobAmount;
+    // Follow whichever band is currently active (bass/mid/treble), not always bass.
+    const bandLevel = bus.bands[bus.activeBand] ?? bus.bands.bass;
+    const continuousBob = bandLevel * this.bobAmount;
     this.position.y = this.baseHeight + this._bobPos + continuousBob;
   }
 

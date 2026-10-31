@@ -22,6 +22,15 @@ export class FollowCamera {
     this.followLerp = opts.followLerp ?? 2.5;  // higher = snappier tracking
 
     this.angle = opts.angle ?? Math.PI * 0.25; // current orbit angle (radians)
+
+    // Optional very-slow vertical oscillation (a low-frequency oscillator). When
+    // on, the camera height sweeps 0..10 instead of using the fixed `height`.
+    this.heightLFO = opts.heightLFO ?? false;
+    this.lfoSpeed = opts.lfoSpeed ?? 0.5; // 1 ≈ a 30s cycle
+    this.lfoMin = opts.lfoMin ?? 0;       // height sweep range
+    this.lfoMax = opts.lfoMax ?? 6;
+    this._lfoPhase = 0;
+
     this.target = new THREE.Vector3();
     this._initialized = false;
   }
@@ -40,9 +49,18 @@ export class FollowCamera {
   /** Advance the orbit and place the camera. Only call when `enabled`. */
   applyOrbit(dt) {
     this.angle += THREE.MathUtils.degToRad(this.rotateSpeed) * dt;
+
+    let height = this.height;
+    if (this.heightLFO) {
+      this._lfoPhase += (Math.PI * 2 / 30) * this.lfoSpeed * dt; // base cycle ~30s
+      const mid = (this.lfoMin + this.lfoMax) / 2;
+      const amp = (this.lfoMax - this.lfoMin) / 2;
+      height = mid + amp * Math.sin(this._lfoPhase); // sweeps lfoMin..lfoMax
+    }
+
     this.camera.position.set(
       this.target.x + Math.cos(this.angle) * this.distance,
-      this.target.y + this.height,
+      this.target.y + height,
       this.target.z + Math.sin(this.angle) * this.distance,
     );
     this.camera.lookAt(this.target);

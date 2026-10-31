@@ -20,6 +20,10 @@ export class ControlBus {
     this.beat = false;
     this.beatEnergy = 0; // strength of the most recent beat
 
+    // Which band is currently driving things (bass/mid/treble) — the resolved
+    // beat source, which also drives the continuous bob.
+    this.activeBand = 'bass';
+
     // Seconds since the audio source started.
     this.time = 0;
   }

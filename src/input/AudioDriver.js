@@ -36,7 +36,7 @@ export class AudioDriver {
 
     // --- tunable (see ui/Panel.js) ---
     this.sensitivity = opts.sensitivity ?? 1.4; // onset threshold = running avg * this
-    this.smoothing = opts.smoothing ?? 0.8;     // band smoothing for continuous motion
+    this.smoothing = opts.smoothing ?? 0.2;     // band smoothing time constant (seconds)
     this.beatSource = opts.beatSource ?? 'auto'; // 'auto' | 'bass' | 'mid' | 'treble'
     this.useTapTempo = opts.useTapTempo ?? false;
 
@@ -116,7 +116,8 @@ export class AudioDriver {
     };
 
     // Smooth the bands for calm continuous motion, and publish them.
-    const a = 1 - this.smoothing;
+    // Frame-rate-independent smoothing: `smoothing` is a time constant in seconds.
+    const a = this.smoothing > 1e-4 ? 1 - Math.exp(-dt / this.smoothing) : 1;
     for (const b of this._bands) {
       this._smoothBands[b] += (raw[b] - this._smoothBands[b]) * a;
       this.bus.bands[b] = this._smoothBands[b];
@@ -127,6 +128,16 @@ export class AudioDriver {
     // Run onset detection + a "beatiness" estimate for every band.
     const detected = {};
     for (const b of this._bands) detected[b] = this._detectBand(b, raw[b]);
+
+    // Resolve the active band (auto picks the most-pumping one). This drives both
+    // beat onset AND the continuous bob, so the bob follows whatever you're
+    // reacting to — not always bass.
+    let src = this.beatSource;
+    if (src === 'auto') {
+      src = this._bands.reduce((best, b) => (this._beatiness[b] > this._beatiness[best] ? b : best), 'bass');
+    }
+    this.autoBand = src;
+    this.bus.activeBand = src;
 
     // Decide the beat.
     this.bus.beat = false;
@@ -143,12 +154,6 @@ export class AudioDriver {
       }
       this._prevTapPhase = phase;
     } else {
-      // Auto picks the most-pumping band; otherwise use the chosen one.
-      let src = this.beatSource;
-      if (src === 'auto') {
-        src = this._bands.reduce((best, b) => (this._beatiness[b] > this._beatiness[best] ? b : best), 'bass');
-      }
-      this.autoBand = src;
       const r = detected[src];
       if (r.onset) {
         this.bus.beat = true;
