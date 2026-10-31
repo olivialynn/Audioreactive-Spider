@@ -25,7 +25,7 @@ export class FollowCamera {
 
     // Optional very-slow vertical oscillation (a low-frequency oscillator). When
     // on, the camera height sweeps 0..10 instead of using the fixed `height`.
-    this.heightLFO = opts.heightLFO ?? false;
+    this.heightLFO = opts.heightLFO ?? true;
     this.lfoSpeed = opts.lfoSpeed ?? 0.5; // 1 ≈ a 30s cycle
     this.lfoMin = opts.lfoMin ?? 0;       // height sweep range
     this.lfoMax = opts.lfoMax ?? 6;

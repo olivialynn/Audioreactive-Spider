@@ -29,6 +29,41 @@ const lerp = (a, b, t) => a + (b - a) * t;
 export const MARK_TYPES = { none: 0, stripes: 1, hourglass: 2, dots: 3, skull: 4, cross: 5, diamond: 6 };
 
 /**
+ * Lay out `count` legs as a left/right pair of rows, fanned front-to-back and
+ * bowed outward in the middle. Shared by every creature that walks on bilateral
+ * legs (spider, angel) — each just passes its own proportions. Odd counts put
+ * the extra leg on the right.
+ *
+ *   attachFront/attachBack : hip x-span along the body (front -> back)
+ *   sideHip                : hip half-width (|z|)
+ *   attachY                : hip height above body center
+ *   footFront/footBack     : foot x-span on the ground
+ *   sideFoot               : base lateral foot distance (|z|)
+ *   bow                    : middle legs reach further out (0 = none)
+ */
+function bilateralLegs({ count, segments, legColor, bow,
+  attachFront, attachBack, sideHip, attachY, footFront, footBack, sideFoot }) {
+  const limbs = [];
+  const buildSide = (n, sign) => {
+    for (let i = 0; i < n; i++) {
+      const t = n > 1 ? i / (n - 1) : 0.5; // 0 = frontmost leg
+      const footZ = sideFoot * (1 + bow * Math.sin(Math.PI * t));
+      limbs.push({
+        type: 'leg',
+        side: sign > 0 ? 'right' : 'left',
+        hipOffset: { x: lerp(attachFront, attachBack, t), y: attachY, z: sign * sideHip },
+        restOffset: { x: lerp(footFront, footBack, t), z: sign * footZ },
+        segments: segments.slice(),
+        color: legColor,
+      });
+    }
+  };
+  buildSide(Math.ceil(count / 2), +1);
+  buildSide(Math.floor(count / 2), -1);
+  return limbs;
+}
+
+/**
  * Build a spider: `legCount` legs split into a left and a right group, attached
  * along the sides of the cephalothorax and fanned from front to back. Works for
  * any count (odd counts put the extra leg on the right), so the leg-count slider
@@ -65,33 +100,11 @@ export function makeSpider(opts = {}) {
 
   // Hips cluster on the sides of the (small) cephalothorax; feet fan out wide
   // front-to-back. The span is centered on the head (which sits around x≈0.2).
-  const attachFront = 0.32, attachBack = 0.04;  // hip cluster along the head (x)
-  const sideHip = 0.17;                          // hip half-width (|z|)
-  const footFront = 0.95 * sprawl, footBack = -0.95 * sprawl;
-  const sideFoot = 1.4 * sprawl;                 // base lateral foot distance (|z|)
-  const attachY = 0.1;                           // hip height above body center
-
-  const perRight = Math.ceil(legCount / 2);
-  const perLeft = Math.floor(legCount / 2);
-  const limbs = [];
-
-  const buildSide = (count, sign) => {
-    for (let i = 0; i < count; i++) {
-      const t = count > 1 ? i / (count - 1) : 0.5; // 0 = frontmost leg
-      // Bow the row of feet outward: middle legs (t≈0.5) reach furthest.
-      const footZ = sideFoot * (1 + bow * Math.sin(Math.PI * t));
-      limbs.push({
-        type: 'leg',
-        side: sign > 0 ? 'right' : 'left',
-        hipOffset: { x: lerp(attachFront, attachBack, t), y: attachY, z: sign * sideHip },
-        restOffset: { x: lerp(footFront, footBack, t), z: sign * footZ },
-        segments: segments.slice(),
-        color: legColor,
-      });
-    }
-  };
-  buildSide(perRight, +1);
-  buildSide(perLeft, -1);
+  const limbs = bilateralLegs({
+    count: legCount, segments, legColor, bow,
+    attachFront: 0.32, attachBack: 0.04, sideHip: 0.17, attachY: 0.1,
+    footFront: 0.95 * sprawl, footBack: -0.95 * sprawl, sideFoot: 1.4 * sprawl,
+  });
 
   const s = bodyScale;
   const detail = 2; // icosahedron subdivision — fixed (enough polys for the bump map)
@@ -123,6 +136,7 @@ export function makeSpider(opts = {}) {
   addEyePair(cx + cr * 0.52, cr * 0.18, cr * 0.70, cr * 0.09); // lower outer
 
   return {
+    kind: 'spider',
     name: `spider-${legCount}`,
     style,
     hairs,
@@ -131,6 +145,62 @@ export function makeSpider(opts = {}) {
     body: { height: bodyHeight, color: bodyColor, segments: [ceph, abdomen] },
     limbs,
     features,
+  };
+}
+
+/**
+ * Build a biblically-accurate angel: a tall, upright, columnar body standing on
+ * many long, high-arched legs (which later carry feathers — the "wings"), and
+ * studded with eyes (expanded in a later step). Same spec shape as makeSpider, so
+ * the gait/IK/body pipeline animates it with no changes. Step 1: the walking
+ * skeleton — plain limbs, a small eye set, markings off.
+ */
+export function makeAngel(opts = {}) {
+  const legCount = opts.legCount ?? 12;        // angels have MANY limbs
+  const bodyScale = opts.bodyScale ?? 1;
+  const bodyHeight = opts.bodyHeight ?? 0.5;   // same stance as the spider
+  const legLength = opts.legLength ?? 1;
+  const kneeFrac = opts.kneeFrac ?? 0.55;      // high knees -> legs arch up like furled wings
+  const sprawl = opts.sprawl ?? 1;
+  const bow = opts.bow ?? 0.4;
+  const legColor = opts.legColor ?? 0xe9d8a6;
+  const bodyColor = opts.bodyColor ?? 0xb5a16b;
+  const style = opts.toon ? 'toon' : 'physical';
+  // No leg hairs on the angel — feathers (a later step) take their place.
+  const hairs = { enabled: false, density: 1, length: 1 };
+
+  // Longer, slenderer legs than the spider; same two-segment checkmark.
+  const totalLeg = 2.8 * legLength;
+  const segments = [totalLeg * kneeFrac, totalLeg * (1 - kneeFrac)];
+
+  // Hips cluster near the body's vertical core (short front-back span) and sit
+  // high, so the long legs sweep up and out — a furled-wing silhouette.
+  const limbs = bilateralLegs({
+    count: legCount, segments, legColor, bow,
+    attachFront: 0.12, attachBack: -0.12, sideHip: 0.2, attachY: 0.18,
+    footFront: 1.0 * sprawl, footBack: -1.1 * sprawl, sideFoot: 1.6 * sprawl,
+  });
+
+  const s = bodyScale;
+  const detail = 2;
+  // Body: a single sphere, sized like the spider's main body mass. A later step
+  // sets one giant eye into it (the angel's signature). Kept as one rounded mass
+  // rather than the earlier tall column.
+  const sphere = {
+    offset: { x: 0, y: 0.1 * s, z: 0 }, radius: 0.5 * s,
+    scale: { x: 1.0, y: 1.0, z: 1.0 }, detail, taper: { front: 1.0, back: 1.0 },
+  };
+
+  return {
+    kind: 'angel',
+    name: `angel-${legCount}`,
+    style,
+    hairs,
+    marking: { type: MARK_TYPES.none, strength: 0, scale: 1 }, // markings off
+    bump: opts.microBump ?? 1.5,
+    body: { height: bodyHeight, color: bodyColor, segments: [sphere] },
+    limbs,
+    features: [], // the giant eye goes here in a later step
   };
 }
 

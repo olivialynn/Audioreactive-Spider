@@ -11,9 +11,6 @@
  *       Picks whichever band is "pumping" most — the one whose energy spikes
  *       highest above its own running average — and follows it. Good when, say,
  *       the kick is weak but the snare/mids are driving the groove.
- *   useTapTempo = true
- *       Ignores onset detection entirely and emits beats on a metronome locked
- *       to your taps (tap() / press T). The manual override.
  *
  * A future MidiDriver would implement the same shape (start() + update(dt)) and
  * write the same ControlBus.
@@ -38,10 +35,8 @@ export class AudioDriver {
     this.sensitivity = opts.sensitivity ?? 1.4; // onset threshold = running avg * this
     this.smoothing = opts.smoothing ?? 0.2;     // band smoothing time constant (seconds)
     this.beatSource = opts.beatSource ?? 'auto'; // 'auto' | 'bass' | 'mid' | 'treble'
-    this.useTapTempo = opts.useTapTempo ?? false;
 
     // --- read-outs (shown in the panel) ---
-    this.bpm = 0;
     this.autoBand = '-'; // which band 'auto' is currently following
 
     // --- per-band detection state ---
@@ -52,13 +47,6 @@ export class AudioDriver {
     this._lastBeat = { bass: -1, mid: -1, treble: -1 };
     this._beatiness = { bass: 0, mid: 0, treble: 0 }; // slow EMA of spike size
     this._smoothBands = { bass: 0, mid: 0, treble: 0 };
-
-    // --- tap-tempo metronome state ---
-    this._taps = [];
-    this._tapPeriod = 0;      // seconds per beat
-    this._tapPhaseRef = 0;    // time of the beat we're phase-aligned to
-    this._prevTapPhase = 0;
-    this._forceBeat = false;  // a tap fires one beat immediately for feedback
 
     this._time = 0;
   }
@@ -78,27 +66,6 @@ export class AudioDriver {
 
     this.freq = new Uint8Array(this.analyser.frequencyBinCount);
     this.running = true;
-  }
-
-  /** Register a tap. Two+ taps set the tempo and switch to tap mode. */
-  tap() {
-    const t = this._time;
-    this._taps.push(t);
-    if (this._taps.length > 6) this._taps.shift();
-
-    if (this._taps.length >= 2) {
-      let sum = 0;
-      for (let i = 1; i < this._taps.length; i++) sum += this._taps[i] - this._taps[i - 1];
-      const period = sum / (this._taps.length - 1);
-      if (period > 0.2 && period < 2.0) { // 30..300 BPM
-        this._tapPeriod = period;
-        this._tapPhaseRef = t;     // align a beat to this tap
-        this._prevTapPhase = 0;
-        this.bpm = Math.round(60 / period);
-        this.useTapTempo = true;   // taps imply you want manual tempo
-      }
-    }
-    this._forceBeat = true; // immediate feedback on the tap itself
   }
 
   update(dt) {
@@ -139,26 +106,12 @@ export class AudioDriver {
     this.autoBand = src;
     this.bus.activeBand = src;
 
-    // Decide the beat.
+    // Decide the beat from onset detection on the active band.
     this.bus.beat = false;
-    if (this._forceBeat) {
+    const r = detected[src];
+    if (r.onset) {
       this.bus.beat = true;
-      this.bus.beatEnergy = 0.8;
-      this._forceBeat = false;
-    } else if (this.useTapTempo && this._tapPeriod > 0) {
-      // Metronome: fire when we cross into a new beat period.
-      const phase = (this._time - this._tapPhaseRef) / this._tapPeriod;
-      if (Math.floor(phase) > Math.floor(this._prevTapPhase)) {
-        this.bus.beat = true;
-        this.bus.beatEnergy = 0.8;
-      }
-      this._prevTapPhase = phase;
-    } else {
-      const r = detected[src];
-      if (r.onset) {
-        this.bus.beat = true;
-        this.bus.beatEnergy = Math.min(1, r.avg > 1e-6 ? (r.energy / r.avg) / 4 : 0.5);
-      }
+      this.bus.beatEnergy = Math.min(1, r.avg > 1e-6 ? (r.energy / r.avg) / 4 : 0.5);
     }
   }
 

@@ -29,6 +29,8 @@ index.html              import map + start overlay
 src/
   main.js               composition + the animation loop (the only file that
                         knows about everything at once)
+  Swarm.js              the group: one controllable hero + randomized extras,
+                        and the wander/circle arrangements
 
   input/                --- signal in ---
     ControlBus.js       normalized signals every input writes / the creature reads

@@ -18,6 +18,7 @@ import { GaitPlanner, idealFootPosition } from './GaitPlanner.js';
 import { solveLeg } from './IKSolver.js';
 import { legsOf } from './CreatureSpec.js';
 
+const UP = new THREE.Vector3(0, 1, 0);
 const _hipLocal = new THREE.Vector3();
 const _hip = new THREE.Vector3();
 
@@ -76,6 +77,21 @@ export class Creature {
     }
   }
 
+  /** Place the creature at a spot with a heading and arrangement mode, and
+   *  re-seat its feet there (used when arranging a group). */
+  placeAt(x, z, heading, arrangement) {
+    this.body.arrangement = arrangement;
+    this.body.position.set(x, this.body.baseHeight, z);
+    this.body.heading = heading;
+    this.body.quaternion.setFromAxisAngle(UP, heading);
+    if (arrangement === 'circle') {
+      this.body.home.set(x, 0, z);
+      this.body.homeHeading = heading;
+    }
+    this.gait.snapToIdeal(this.body.pose);
+    this._seedPose();
+  }
+
   /** Swap in a new spec at runtime (e.g. changed leg count). Keeps body/gait
    *  objects (and thus their UI bindings) alive; only the meshes are rebuilt. */
   rebuild(spec) {
@@ -97,8 +113,12 @@ export class Creature {
     // Constant emissive glow across all materials.
     for (const m of this.render.materials) m.emissiveIntensity = this.glow;
 
-    // 2. Feet decide where/when to step.
-    this.gait.update(dt, pose, this.body.velDir);
+    // 2. Feet decide where/when to step. Dancing in a ring uses an easier
+    //    threshold so the small shuffle still lifts feet.
+    const thr = (this.body.arrangement === 'circle' && this.gait.easySteps)
+      ? this.gait.circleStepThreshold
+      : this.gait.stepThreshold;
+    this.gait.update(dt, pose, this.body.velDir, thr);
 
     // 3 + 4. Solve + render each leg.
     for (let i = 0; i < this.legSpecs.length; i++) {

@@ -25,6 +25,8 @@ export class GaitPlanner {
   constructor(legs, opts = {}) {
     // --- tunable (see ui/Panel.js) ---
     this.stepThreshold = opts.stepThreshold ?? 0.45; // drift before a leg steps
+    this.circleStepThreshold = opts.circleStepThreshold ?? 0.3; // smaller, for dancing in a ring
+    this.easySteps = false; // set by the Swarm when circle + count > 1
     this.stepDuration = opts.stepDuration ?? 0.18;   // seconds per step
     this.stepLift = opts.stepLift ?? 0.35;           // peak foot height mid-step
     this.maxStepping = opts.maxStepping ?? Math.max(1, Math.floor(legs.length / 2));
@@ -52,8 +54,9 @@ export class GaitPlanner {
    * @param dt       seconds
    * @param pose     { position, quaternion } of the body this frame
    * @param velDir   THREE.Vector3 horizontal movement direction (unit-ish)
+   * @param threshold drift that triggers a step (defaults to stepThreshold)
    */
-  update(dt, pose, velDir) {
+  update(dt, pose, velDir, threshold = this.stepThreshold) {
     const steppingNow = this.feet.reduce((n, f) => n + (f.stepping ? 1 : 0), 0);
     let budget = this.maxStepping - steppingNow;
 
@@ -74,7 +77,7 @@ export class GaitPlanner {
       // Not stepping: does this foot need to?
       idealFootPosition(foot.leg, pose, _ideal);
       const drift = foot.planted.distanceTo(_ideal);
-      if (drift > this.stepThreshold && budget > 0) {
+      if (drift > threshold && budget > 0) {
         foot.stepping = true;
         foot.progress = 0;
         foot.stepStart.copy(foot.planted);

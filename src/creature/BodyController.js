@@ -18,6 +18,8 @@ import * as THREE from 'three';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _forward = new THREE.Vector3();
+const _wobbleE = new THREE.Euler();
+const _wobbleQ = new THREE.Quaternion();
 
 export class BodyController {
   constructor(opts = {}) {
@@ -34,6 +36,24 @@ export class BodyController {
     // --- dance tunables ---
     this.bobAmount = opts.bobAmount ?? 0.2; // continuous lift from bass
     this.beatPop = opts.beatPop ?? 3.0;     // impulse added to bob on a beat
+
+    // --- arrangement: 'wander' (walks around) or 'circle' (stands, faces home) ---
+    this.arrangement = 'wander';
+    this.home = new THREE.Vector3();
+    this.homeHeading = 0;
+
+    // --- per-creature dance variety (for groups) ---
+    this.responseScale = 1;                       // how hard it reacts to the audio
+    this.swayPhase = Math.random() * Math.PI * 2; // idle sway LFO, random phase...
+    this.swaySpeed = 0.6 + Math.random() * 0.8;   // ...and speed, so a crowd desyncs
+    this.swayAmount = 0.04;                        // vertical idle sway
+    this.swayTilt = 0.035;                         // rotational idle wobble (radians)
+    this.shuffle = 0.3;                            // horizontal drift in 'circle' (shuffles feet)
+
+    // Activity gate: below this audio level they ease to a standstill (like a
+    // person stopping during a quiet passage), and spring back when it returns.
+    this.quietCutoff = 0.04;
+    this._active = 1; // smoothed 0..1
 
     // --- state ---
     this.position = new THREE.Vector3(0, this.baseHeight, 0);
@@ -60,10 +80,39 @@ export class BodyController {
   }
 
   update(dt, bus) {
-    this._updateMode(dt, bus);
-    this._updateHeading(dt);
-    this._updateMovement(dt, bus);
-    this._updateDance(dt, bus);
+    this.swayPhase += this.swaySpeed * dt;
+
+    // Ease the activity gate toward on/off (quick to wake, slower to settle).
+    const gate = bus.level > this.quietCutoff ? 1 : 0;
+    const tau = gate > this._active ? 0.25 : 0.8;
+    this._active += (gate - this._active) * (1 - Math.exp(-dt / tau));
+
+    if (this.arrangement === 'circle') {
+      // Stand near home, face the center, and shuffle a little (two out-of-phase
+      // sines trace a small loop) — enough body drift that the gait lifts feet.
+      // Scaled by _active so they go still when the music drops out.
+      this.heading = this.homeHeading;
+      this.position.x = this.home.x + Math.sin(this.swayPhase * 0.8) * this.shuffle * this._active;
+      this.position.z = this.home.z + Math.sin(this.swayPhase * 0.5 + 1.3) * this.shuffle * this._active;
+      this.velDir.set(0, 0, 0);
+      this.quaternion.setFromAxisAngle(UP, this.heading);
+      this._applyWobble();
+      this._updateDance(dt, bus);
+    } else {
+      this._updateMode(dt, bus);
+      this._updateHeading(dt);
+      this._updateMovement(dt, bus);
+      this._applyWobble();
+      this._updateDance(dt, bus);
+    }
+  }
+
+  // A small rotational idle wobble layered onto the heading, for personality.
+  _applyWobble() {
+    const t = this.swayTilt * this._active;
+    _wobbleE.set(Math.sin(this.swayPhase * 1.3) * t, 0, Math.cos(this.swayPhase) * t);
+    _wobbleQ.setFromEuler(_wobbleE);
+    this.quaternion.multiply(_wobbleQ);
   }
 
   _updateMode(dt, bus) {
@@ -107,7 +156,8 @@ export class BodyController {
 
   _updateMovement(dt, bus) {
     // Ease speed toward its target so stops/starts are smooth (0 when dancing).
-    const targetSpeed = this.mode === 'dance' ? 0 : this.baseSpeed + this.audioSpeed * bus.level;
+    // Gate the whole walk by _active so they halt when the audio goes quiet.
+    const targetSpeed = (this.mode === 'dance' ? 0 : this.baseSpeed + this.audioSpeed * bus.level) * this._active;
     this.speed += (targetSpeed - this.speed) * (1 - Math.exp(-3 * dt));
     this.position.addScaledVector(_forward, this.speed * dt);
 
@@ -127,15 +177,18 @@ export class BodyController {
     }
 
     // Damped spring pulls the bob back to 0; each beat kicks it up so it bounces.
+    // responseScale varies the reaction per creature so a group isn't in lockstep.
     const accel = -this._stiffness * this._bobPos - this._damping * this._bobVel;
     this._bobVel += accel * dt;
-    if (bus.beat) this._bobVel += this.beatPop * (0.5 + 0.5 * bus.beatEnergy);
+    if (bus.beat) this._bobVel += this.beatPop * (0.5 + 0.5 * bus.beatEnergy) * this.responseScale;
     this._bobPos += this._bobVel * dt;
 
     // Follow whichever band is currently active (bass/mid/treble), not always bass.
     const bandLevel = bus.bands[bus.activeBand] ?? bus.bands.bass;
-    const continuousBob = bandLevel * this.bobAmount;
-    this.position.y = this.baseHeight + this._bobPos + continuousBob;
+    const continuousBob = bandLevel * this.bobAmount * this.responseScale;
+    // Idle sway: a gentle autonomous bob (random phase/speed), gated by activity.
+    const sway = Math.sin(this.swayPhase) * this.swayAmount * this._active;
+    this.position.y = this.baseHeight + this._bobPos + continuousBob + sway;
   }
 
   get pose() {
