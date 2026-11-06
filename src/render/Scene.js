@@ -17,7 +17,44 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
+import { HalftonePass } from 'three/addons/postprocessing/HalftonePass.js';
 import { OutlinePass } from './OutlinePass.js';
+
+// Gentle glitch: a brief RGB split + slight horizontal band jitter, scaled by
+// `amount` (0 = passthrough). No noise/flashing, so no strobing. main.js pulses
+// `amount` down from 1 on each beat.
+const GlitchShader = {
+  uniforms: { tDiffuse: { value: null }, amount: { value: 0 }, seed: { value: 0 } },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float amount; uniform float seed; varying vec2 vUv;
+    float rand(float x){ return fract(sin(x * 12.9898) * 43758.5453); }
+    void main(){
+      vec2 uv = vUv;
+      float band = floor(uv.y * 20.0);
+      uv.x += (rand(band + seed) - 0.5) * amount * 0.04; // mild per-band shift
+      float s = amount * 0.010;                          // chromatic split
+      float r = texture2D(tDiffuse, uv + vec2(s, 0.0)).r;
+      float g = texture2D(tDiffuse, uv).g;
+      float b = texture2D(tDiffuse, uv - vec2(s, 0.0)).b;
+      gl_FragColor = vec4(r, g, b, 1.0);
+    }`,
+};
+
+// Posterize: quantize each channel into `levels` hard bands (cel/comic banding).
+const PosterizeShader = {
+  uniforms: { tDiffuse: { value: null }, levels: { value: 5 } },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float levels; varying vec2 vUv;
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv);
+      c.rgb = floor(c.rgb * levels + 0.5) / levels;
+      gl_FragColor = vec4(clamp(c.rgb, 0.0, 1.0), c.a);
+    }`,
+};
 
 export function createScene(container) {
   const scene = new THREE.Scene();
@@ -100,8 +137,32 @@ export function createScene(container) {
     0.4,  // radius
     0.85, // threshold — only bright/emissive bits bloom
   );
+  // Afterimage: motion trails (damp = how much of the previous frame persists). Put
+  // it before bloom so trails glow too. Audio can drive damp (main.js).
+  const afterimagePass = new AfterimagePass(0.9);
+  afterimagePass.enabled = false;
+  composer.addPass(afterimagePass);
+
   composer.addPass(bloomPass);
-  composer.addPass(new OutputPass()); // tone mapping + color space
+
+  // --- Optional stylization passes (disabled by default), before the final OutputPass. ---
+  const posterizePass = new ShaderPass(PosterizeShader);
+  posterizePass.enabled = false;
+  composer.addPass(posterizePass);
+
+  const halftonePass = new HalftonePass(window.innerWidth, window.innerHeight, {
+    shape: 1, radius: 4, rotateR: Math.PI / 12, rotateG: Math.PI / 12 * 2, rotateB: Math.PI / 12 * 3,
+    scatter: 0, blending: 1, blendingMode: 1, greyscale: false,
+  });
+  halftonePass.enabled = false;
+  composer.addPass(halftonePass);
+
+  // Glitch: a gentle beat-pulsed RGB split (main.js drives `amount`).
+  const glitchPass = new ShaderPass(GlitchShader);
+  glitchPass.enabled = false;
+  composer.addPass(glitchPass);
+
+  composer.addPass(new OutputPass()); // tone mapping + color space (always last)
 
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -109,7 +170,12 @@ export function createScene(container) {
     renderer.setSize(window.innerWidth, window.innerHeight);
     composer.setSize(window.innerWidth, window.innerHeight);
     outlinePass.setSize(window.innerWidth, window.innerHeight);
+    halftonePass.setSize(window.innerWidth, window.innerHeight);
   });
 
-  return { scene, camera, renderer, controls, composer, bloomPass, outlinePass, keyLight: key, fillLight: fill };
+  return {
+    scene, camera, renderer, controls, composer, bloomPass, outlinePass,
+    afterimagePass, posterizePass, halftonePass, glitchPass,
+    keyLight: key, fillLight: fill,
+  };
 }

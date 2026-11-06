@@ -57,12 +57,16 @@ function randomAngelOpts(toon) {
     kneeFrac: rand(0.5, 0.62),
     sprawl: rand(0.9, 1.4),
     bow: rand(0.2, 0.5),
+    ringCount: pick([0, 1, 1, 2]), // vary the ophanim wheels across the group
     microBump: rand(0.8, 1.6),
     bodyColor: '#' + main.getHexString(),
     legColor: '#' + accent.getHexString(),
     toon,
   };
 }
+
+/** Default wander spacing per creature type (angels are bigger, so they stand further apart). */
+function defaultSeparation(type) { return type === 'angel' ? 4 : 3.5; }
 
 /** Creature-type registry: each type knows how to build a spec and roll a random one. */
 const TYPES = {
@@ -79,8 +83,8 @@ export class Swarm {
     this.creatures = [this.hero];
     this.arrangement = 'circle';
     this.ringRadius = 4;
-    this.separation = 3.5; // how far apart wandering creatures are kept
     this.type = heroSpec.kind ?? 'spider'; // extras are built to match the hero's type
+    this.separation = defaultSeparation(this.type); // how far apart wandering creatures are kept
     this._toon = heroSpec.style === 'toon';
     this.arrange();
   }
@@ -139,6 +143,7 @@ export class Swarm {
    *  re-roll to match the new type. */
   setType(type, heroSpec) {
     this.type = type;
+    this.separation = defaultSeparation(type); // reset wander spacing to the type's default
     this._toon = heroSpec.style === 'toon';
     this.hero.rebuild(heroSpec);
     for (let i = 0; i < this.extras.length; i++) {

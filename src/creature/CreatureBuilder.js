@@ -13,8 +13,6 @@
  *   - dispose():    free GPU resources (used when rebuilding for a new spec)
  */
 import * as THREE from 'three';
-import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { legsOf } from './CreatureSpec.js';
 import { OUTLINE_LAYER } from '../render/OutlinePass.js';
 
@@ -134,6 +132,43 @@ export function buildCreature(spec) {
   const eyeGeo = new THREE.SphereGeometry(1, 16, 12); // unit; scaled per eye
   disposables.push(eyeGeo);
   const reactiveEyes = []; // pupils we dilate to the audio each frame
+  let fangMat = null;      // dark claw material (lazily built when a fang appears)
+
+  // A chelicera: a tapered base segment hanging from the head, with a sharp fang
+  // curling inward at its tip. Built pointing straight down; the caller places it.
+  function buildFang(cfg) {
+    if (!fangMat) {
+      fangMat = toon
+        ? new THREE.MeshToonMaterial({ color: 0x1a1016, emissive: 0x1a1016, emissiveIntensity: 0, gradientMap: gradient })
+        : new THREE.MeshPhysicalMaterial({ color: 0x1a1016, roughness: 0.3, metalness: 0.0, clearcoat: 0.85, clearcoatRoughness: 0.2, emissive: 0x1a1016, emissiveIntensity: 0 });
+      disposables.push(fangMat);
+    }
+    const g = new THREE.Group();
+    g.rotation.z = cfg.splay ?? 0; // slight forward lean
+
+    const baseLen = cfg.base, baseR = cfg.baseRadius;
+    const baseGeo = new THREE.CylinderGeometry(baseR, baseR * 0.7, baseLen, 12);
+    disposables.push(baseGeo);
+    const base = new THREE.Mesh(baseGeo, bodyMat); // chitin, matches the head
+    base.position.y = -baseLen / 2;                // top at origin, hangs down
+    base.castShadow = true;
+    g.add(base);
+
+    // Fang: a sharp dark cone at the base's tip, curled inward about the fore/aft axis.
+    const fangLen = cfg.fang, fangR = cfg.fangRadius;
+    const fangGeo = new THREE.ConeGeometry(fangR, fangLen, 12);
+    disposables.push(fangGeo);
+    const pivot = new THREE.Group();
+    pivot.position.y = -baseLen;
+    pivot.rotation.x = cfg.curl ?? 0;   // curl toward the midline
+    const fang = new THREE.Mesh(fangGeo, fangMat);
+    fang.rotation.x = Math.PI;          // cone apex points down
+    fang.position.y = -fangLen / 2;
+    fang.castShadow = true;
+    pivot.add(fang);
+    g.add(pivot);
+    return g;
+  }
 
   // Build one layered eye (spherical eyeball + iris + pupil, optional almond lids)
   // at the origin, gazing along local +Y. The caller positions/orients the group.
@@ -195,6 +230,13 @@ export function buildCreature(spec) {
   }
 
   for (const f of spec.features ?? []) {
+    // Chelicerae + fangs (spider), parented to the head so they ride along.
+    if (f.type === 'fang') {
+      const fg = buildFang(f);
+      fg.position.set(f.offset.x, f.offset.y, f.offset.z);
+      bodyGroup.add(fg);
+      continue;
+    }
     if (f.type !== 'eye') continue;
 
     // Simple eye: a single accent ball (spider's little cluster).
@@ -215,75 +257,40 @@ export function buildCreature(spec) {
     if (f.reactive) reactiveEyes.push({ pupil: e.pupil, pupilBase: e.pupilBase });
   }
 
-  // Ring: the ophanim's wheel — a slim hollow-cylinder band (flat top/bottom, inner
-  // and outer walls) around the torso, studded with eyes on its rim. It spins about
-  // its OWN axis; the rim eyes make that rotation read. ringTilt leans it slightly;
-  // ringSpin (its child) is what rotates. Accent-colored (reuses legMat).
-  let ringSpin = null;
-  if (spec.ring) {
-    const rg = spec.ring;
-    legMat.side = THREE.DoubleSide; // the pierced band reads from inside and out
+  // Ophanim wheels: 0–2 slim hollow-cylinder bands around the torso, each pierced
+  // with almond holes + an iris bead and spinning about its own axis. ringTilt leans
+  // a wheel (tiltX/tiltZ); its ringSpin child is what rotates (speed can be negative
+  // for counter-rotation). The band is hand-built so edges stay crisp with no seam.
+  const rings = [];
+  for (const rg of spec.rings ?? []) {
+    legMat.side = THREE.DoubleSide; // the band's inner wall reads from inside
     const ringTilt = new THREE.Group();
     ringTilt.position.set(rg.center.x, rg.center.y, rg.center.z);
-    ringTilt.rotation.x = rg.tilt ?? 0;
-    ringSpin = new THREE.Group(); // rotates about the band's own (local Y) axis
+    ringTilt.rotation.set(rg.tiltX ?? 0, 0, rg.tiltZ ?? 0);
+    const ringSpin = new THREE.Group();
     ringTilt.add(ringSpin);
 
     const h = rg.height, ri = rg.inner, ro = rg.outer, midR = (ri + ro) / 2;
+    const hc = rg.holes ?? { count: 6, len: 0.2, ht: 0.08 };
+    const band = new THREE.Mesh(
+      piercedBandGeometry(ri, ro, h, hc.count, (hc.len / 2) / ro, hc.ht / 2), legMat);
+    band.castShadow = true; band.receiveShadow = true;
+    disposables.push(band.geometry);
+    ringSpin.add(band);
 
-    // Watertight band (hollow cylinder, flat top/bottom) as a solid for the boolean.
-    const bandGeo = new THREE.LatheGeometry([
-      new THREE.Vector2(ri, -h / 2), new THREE.Vector2(ro, -h / 2),
-      new THREE.Vector2(ro, h / 2), new THREE.Vector2(ri, h / 2),
-      new THREE.Vector2(ri, -h / 2),
-    ], 72);
-    bandGeo.computeVertexNormals();
-
-    const hc = rg.holes;
-    if (hc) {
-      // Build one vesica prism, aimed radially, cloned around the rim; merge them and
-      // subtract in one boolean to punch see-through almond holes through the wall.
-      const depth = (ro - ri) + 0.08; // through both walls, with margin
-      const cutterGeo = new THREE.ExtrudeGeometry(vesicaShape(hc.len / 2, hc.ht / 2),
-        { depth, bevelEnabled: false, curveSegments: 24 });
-      cutterGeo.translate(0, 0, -depth / 2); // centered across the wall
-      const cutters = [];
+    // A floating "iris" bead in each hole, in the same material as the ring.
+    if (hc.iris) {
+      const irisGeo = new THREE.SphereGeometry(hc.iris, 16, 12);
+      disposables.push(irisGeo);
       for (let i = 0; i < hc.count; i++) {
         const th = (i / hc.count) * Math.PI * 2;
-        const m = ringSlotBasis(th).setPosition(midR * Math.cos(th), 0, midR * Math.sin(th));
-        cutters.push(cutterGeo.clone().applyMatrix4(m));
+        const bead = new THREE.Mesh(irisGeo, legMat);
+        bead.position.set(midR * Math.cos(th), 0, midR * Math.sin(th));
+        ringSpin.add(bead);
       }
-      const cutGeo = mergeGeometries(cutters);
-      cutters.forEach((g) => g.dispose());
-      cutterGeo.dispose();
-
-      const result = new Evaluator().evaluate(new Brush(bandGeo, legMat), new Brush(cutGeo), SUBTRACTION);
-      result.castShadow = true;
-      result.receiveShadow = true;
-      ringSpin.add(result);
-      disposables.push(bandGeo, cutGeo, result.geometry);
-
-      // A floating accent "iris" disc centered in each hole.
-      if (hc.iris) {
-        const irisGeo = new THREE.CircleGeometry(hc.iris, 24);
-        const irisMat = eyeMat.clone(); // accent, double-sided so it shows as it spins
-        irisMat.side = THREE.DoubleSide;
-        disposables.push(irisGeo, irisMat);
-        for (let i = 0; i < hc.count; i++) {
-          const th = (i / hc.count) * Math.PI * 2;
-          const disc = new THREE.Mesh(irisGeo, irisMat);
-          disc.position.set(midR * Math.cos(th), 0, midR * Math.sin(th));
-          disc.quaternion.setFromRotationMatrix(ringSlotBasis(th));
-          ringSpin.add(disc);
-        }
-      }
-    } else {
-      const band = new THREE.Mesh(bandGeo, legMat);
-      band.castShadow = true;
-      ringSpin.add(band);
-      disposables.push(bandGeo);
     }
     bodyGroup.add(ringTilt);
+    rings.push({ spin: ringSpin, speed: rg.spin ?? 0 });
   }
 
   group.add(bodyGroup);
@@ -542,7 +549,7 @@ export function buildCreature(spec) {
   if (featherMesh) featherMesh.layers.disable(OUTLINE_LAYER);
 
   return {
-    group, bodyGroup, legs, updateLeg, updateEyes, ringSpin, dispose,
+    group, bodyGroup, legs, updateLeg, updateEyes, rings, dispose,
     bodyMat, abdomenMat, legMat, eyeMat, markUniforms,
     materials: [bodyMat, abdomenMat, legMat, eyeMat], // for color + glow control
   };
@@ -769,27 +776,55 @@ function featherGeometry() {
   return geo;
 }
 
-/** A vesica/almond 2D Shape: the intersection of two equal circles, with cusps at
- *  (±halfLen, 0) and half-height halfHt. (Two arcs meeting at the cusps.) */
-function vesicaShape(halfLen, halfHt) {
-  const R = (halfHt + (halfLen * halfLen) / halfHt) / 2; // circle radius...
-  const c = ((halfLen * halfLen) / halfHt - halfHt) / 2; // ...and center offset
-  const a = Math.atan2(c, halfLen);
-  const s = new THREE.Shape();
-  s.moveTo(halfLen, 0);
-  s.absarc(0, -c, R, a, Math.PI - a, false);         // upper boundary (circle below)
-  s.absarc(0, c, R, -(Math.PI - a), -a, false);      // lower boundary (circle above)
-  return s;
-}
-
-/** Basis matrix orienting a hole/iris at angle `th` around the band: local x =
- *  tangent (the cusp axis), y = vertical, z = radial (outward). */
-function ringSlotBasis(th) {
-  return new THREE.Matrix4().makeBasis(
-    new THREE.Vector3(-Math.sin(th), 0, Math.cos(th)),
-    new THREE.Vector3(0, 1, 0),
-    new THREE.Vector3(Math.cos(th), 0, Math.sin(th)),
-  );
+/**
+ * A hollow-cylinder band (inner/outer walls + flat top/bottom caps) pierced with
+ * `count` vesica (almond) holes around it. Built by walking the circumference: at
+ * each angular step every wall is split around the hole's half-height profile ay(θ)
+ * (a true vesica: two circular arcs, so the cusps are pointy), and the hole is lined
+ * with top/bottom tunnel surfaces so it's a clean see-through opening. Non-indexed +
+ * flat-shaded, so edges stay crisp; the material is double-sided so winding is moot.
+ *   ri/ro: inner/outer radius   h: band height
+ *   halfAng: hole angular half-width (radians)   halfHt: hole half-height (world)
+ */
+function piercedBandGeometry(ri, ro, h, count, halfAng, halfHt) {
+  const R = (halfHt + (halfAng * halfAng) / halfHt) / 2; // vesica circle radius...
+  const c = ((halfAng * halfAng) / halfHt - halfHt) / 2; // ...and center offset
+  const TAU = Math.PI * 2;
+  const holeHalfHt = (th) => { // vesica half-height at angle th (0 outside any hole)
+    for (let i = 0; i < count; i++) {
+      let d = th - (i / count) * TAU;
+      d = Math.atan2(Math.sin(d), Math.cos(d)); // wrap to [-pi, pi]
+      if (Math.abs(d) < halfAng) return Math.sqrt(Math.max(0, R * R - d * d)) - c;
+    }
+    return 0;
+  };
+  const M = Math.max(count * 16, 120); // circumference samples
+  const pos = [];
+  const P = (r, th, y) => [r * Math.cos(th), y, r * Math.sin(th)];
+  const quad = (a, b, cc, d) => { pos.push(...a, ...b, ...cc, ...a, ...cc, ...d); };
+  for (let j = 0; j < M; j++) {
+    const t0 = (j / M) * TAU, t1 = ((j + 1) / M) * TAU;
+    const a0 = holeHalfHt(t0), a1 = holeHalfHt(t1);
+    const y = h / 2;
+    // Outer wall: a band below the hole and a band above it (full wall where a=0).
+    quad(P(ro, t0, -y), P(ro, t1, -y), P(ro, t1, -a1), P(ro, t0, -a0));
+    quad(P(ro, t0, a0), P(ro, t1, a1), P(ro, t1, y), P(ro, t0, y));
+    // Inner wall (reverse order; doesn't matter visually with a double-sided mat).
+    quad(P(ri, t1, -y), P(ri, t0, -y), P(ri, t0, -a0), P(ri, t1, -a1));
+    quad(P(ri, t1, a1), P(ri, t0, a0), P(ri, t0, y), P(ri, t1, y));
+    // Flat caps (full annulus, top and bottom).
+    quad(P(ri, t0, y), P(ri, t1, y), P(ro, t1, y), P(ro, t0, y));
+    quad(P(ro, t0, -y), P(ro, t1, -y), P(ri, t1, -y), P(ri, t0, -y));
+    // Tunnel lining around each hole (the almond's ceiling and floor, ro -> ri).
+    if (a0 > 0 || a1 > 0) {
+      quad(P(ro, t0, a0), P(ro, t1, a1), P(ri, t1, a1), P(ri, t0, a0));
+      quad(P(ri, t0, -a0), P(ri, t1, -a1), P(ro, t1, -a1), P(ro, t0, -a0));
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
 }
 
 /** Stretch/orient a unit-height cylinder so it spans from a to b. */

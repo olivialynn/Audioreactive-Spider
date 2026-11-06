@@ -12,23 +12,23 @@ import { createScene } from './render/Scene.js';
 import { FollowCamera } from './render/FollowCamera.js';
 import { ControlBus } from './input/ControlBus.js';
 import { AudioDriver } from './input/AudioDriver.js';
-import { makeSpider, makeAngel } from './creature/CreatureSpec.js';
+import { makeSpider } from './creature/CreatureSpec.js';
 import { Swarm } from './Swarm.js';
 import { createPanel } from './ui/Panel.js';
 
 const container = document.getElementById('app');
-const { scene, camera, renderer, controls, composer, bloomPass, outlinePass, keyLight, fillLight } = createScene(container);
+const {
+  scene, camera, renderer, controls, composer, bloomPass, outlinePass,
+  afterimagePass, posterizePass, halftonePass, glitchPass, keyLight, fillLight,
+} = createScene(container);
 
 // --- Input + creatures ---
 const bus = new ControlBus();
 const audio = new AudioDriver(bus);
-// DEV MODE: start as an angel (prod default is makeSpider({ legCount: 8 })).
-const swarm = new Swarm(scene, makeAngel({ legCount: 6 })); // hero + (later) extras
-void makeSpider; // prod default, kept imported for the dev-mode toggle
+const swarm = new Swarm(scene, makeSpider({ legCount: 8 })); // hero + (later) extras
 
 // --- Camera rig ---
-// DEV MODE: follow + orbit off (prod default is enabled). Revert: drop the opt.
-const follow = new FollowCamera(camera, { enabled: false });
+const follow = new FollowCamera(camera);
 
 // --- Key-light rig: the spotlight can ride along above the spider so the lit
 // pool follows it. `offset` is its position relative to the tracked point;
@@ -54,6 +54,12 @@ const STROBE_FLOOR = 0.1;
 // The fill point light always rides near the spider (offset in world space).
 const fillRig = { offset: new THREE.Vector3(-2.5, 5, -3) };
 
+// Afterimage trails: `base` damp (how long trails persist); `reactive` adds length
+// with loudness. Beat glitch: fires a short glitch burst on each detected beat.
+const trail = { base: 0.85, reactive: true };
+const glitchRig = { onBeat: false, intensity: 0.6 };
+let _glitchAmt = 0;
+
 // --- UI ---
 const panel = createPanel({
   swarm,
@@ -62,6 +68,12 @@ const panel = createPanel({
   renderer,
   bloomPass,
   outlinePass,
+  afterimagePass,
+  posterizePass,
+  halftonePass,
+  glitchPass,
+  trail,
+  glitchRig,
   keyLight,
   lightRig,
   fillLight,
@@ -116,6 +128,23 @@ function tick() {
 
   // Fill light tracks the focus.
   fillLight.position.set(_focus.x + fillRig.offset.x, fillRig.offset.y, _focus.z + fillRig.offset.z);
+
+  // Afterimage trails: longer when loud (if audio-reactive).
+  if (afterimagePass.enabled) {
+    const d = trail.base + (trail.reactive ? 0.16 * Math.min(1, bus.level * 2.5) : 0);
+    afterimagePass.uniforms.damp.value = Math.min(0.97, d);
+  }
+
+  // Beat glitch: a gentle RGB-split pulse that eases out after each beat (no strobe).
+  if (glitchRig.onBeat) {
+    if (bus.beat) _glitchAmt = 1;
+    _glitchAmt = Math.max(0, _glitchAmt - dt / 0.18); // ease out over ~0.18s
+    glitchPass.enabled = _glitchAmt > 0.001;
+    glitchPass.uniforms.amount.value = _glitchAmt * glitchRig.intensity;
+    glitchPass.uniforms.seed.value = Math.random();
+  } else if (glitchPass.enabled) {
+    glitchPass.enabled = false;
+  }
 
   // Camera: smoothed focus; in follow mode the rig drives the camera, otherwise
   // OrbitControls does (manual inspect) with its target following the focus.

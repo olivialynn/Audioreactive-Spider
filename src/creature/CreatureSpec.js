@@ -135,6 +135,21 @@ export function makeSpider(opts = {}) {
   addEyePair(cx + cr * 0.58, cr * 0.58, cr * 0.62, cr * 0.10); // upper outer
   addEyePair(cx + cr * 0.52, cr * 0.18, cr * 0.70, cr * 0.09); // lower outer
 
+  // Chelicerae + fangs: a mirrored pair hanging from the lower front of the
+  // cephalothorax (just below the eyes), each curling inward toward the midline.
+  if (opts.fangs !== false) {
+    const addFang = (fz) => features.push({
+      type: 'fang',
+      offset: { x: cx + cr * 0.58, y: -cr * 0.08, z: fz }, // tucked under the head, base top sunk in
+      base: cr * 0.33, baseRadius: cr * 0.17, // thick chelicera segment
+      fang: cr * 0.41, fangRadius: cr * 0.05, // sharp claw at its tip
+      splay: 0.22,                            // slight forward lean of the segment
+      curl: 0.5 * Math.sign(fz),              // fang curls in toward the midline
+    });
+    addFang(cr * 0.42);
+    addFang(-cr * 0.42);
+  }
+
   return {
     kind: 'spider',
     name: `spider-${legCount}`,
@@ -163,6 +178,7 @@ export function makeAngel(opts = {}) {
   const kneeFrac = opts.kneeFrac ?? 0.55;      // high knees -> legs arch up like furled wings
   const sprawl = opts.sprawl ?? 1;
   const bow = opts.bow ?? 0.4;
+  const ringCount = Math.max(0, Math.min(2, Math.round(opts.ringCount ?? 1)));
   // Same default palette as the spider (and the shared panel presets apply to both).
   const legColor = opts.legColor ?? 0xc7b3ff;
   const bodyColor = opts.bodyColor ?? 0x6b5bb5;
@@ -246,15 +262,22 @@ export function makeAngel(opts = {}) {
     marking: { type: MARK_TYPES.none, strength: 0, scale: 1 }, // markings off
     bump: opts.microBump ?? 1.5,
     body: { height: bodyHeight, color: bodyColor, segments: [sphere] },
-    // The ophanim's wheel: a slim hollow-cylinder band (flat top/bottom) around the
-    // torso, pierced with almond (vesica) holes, each with a floating iris disc, and
-    // spinning about its own axis. `spin` is radians/sec; a slight `tilt` gives depth.
-    ring: {
-      center: { x: 0, y: 0.1 * s, z: 0 }, // the sphere's center
-      inner: 0.74 * s, outer: 0.84 * s, height: 0.18 * s,
-      tilt: 0.12, spin: 0.7,
-      holes: { count: 7, len: 0.24 * s, ht: 0.12 * s, iris: 0.032 * s },
-    },
+    // Ophanim wheels: 0–2 slim hollow-cylinder bands around the torso, each pierced
+    // with almond (vesica) holes + a floating iris bead, spinning about its own axis
+    // (`spin` rad/sec). With two, the second is smaller, tilted differently, and spins
+    // the opposite way. `tiltX`/`tiltZ` lean each wheel; both clear the sphere + eyes.
+    rings: [
+      {
+        center: { x: 0, y: 0.1 * s, z: 0 }, inner: 0.80 * s, outer: 0.87 * s, height: 0.14 * s,
+        tiltX: 0.12, tiltZ: 0.0, spin: 0.7,
+        holes: { count: 7, len: 0.24 * s, ht: 0.09 * s, iris: 0.035 * s },
+      },
+      {
+        center: { x: 0, y: 0.1 * s, z: 0 }, inner: 0.64 * s, outer: 0.70 * s, height: 0.12 * s,
+        tiltX: -0.18, tiltZ: 0.28, spin: -0.95,
+        holes: { count: 6, len: 0.2 * s, ht: 0.08 * s, iris: 0.03 * s },
+      },
+    ].slice(0, ringCount),
     limbs,
     features,
   };

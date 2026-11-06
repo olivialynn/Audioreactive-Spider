@@ -16,7 +16,7 @@ import { makeSpider, makeAngel, MARK_TYPES } from '../creature/CreatureSpec.js';
 
 const MAKERS = { spider: makeSpider, angel: makeAngel };
 
-export function createPanel({ swarm, audio, follow, renderer, bloomPass, outlinePass, keyLight, lightRig, fillLight }) {
+export function createPanel({ swarm, audio, follow, renderer, bloomPass, outlinePass, afterimagePass, posterizePass, halftonePass, glitchPass, trail, glitchRig, keyLight, lightRig, fillLight }) {
   const gui = new GUI({ title: 'Controls' });
   injectHeadingStyle();
 
@@ -52,7 +52,7 @@ export function createPanel({ swarm, audio, follow, renderer, bloomPass, outline
   gGroup.add(groupState, 'count', 1, 10, 1).name('count').onFinishChange((v) => { swarm.setCount(v); refitCamera(); });
   gGroup.add(groupState, 'arrangement', ['wander', 'circle']).name('arrangement')
     .onChange((v) => { swarm.setArrangement(v); refitCamera(); });
-  gGroup.add(swarm, 'separation', 3, 4, 0.1).name('(wander) spacing');
+  const sepCtrl = gGroup.add(swarm, 'separation', 3, 6, 0.1).name('(wander) spacing');
   gGroup.add(hero.gait, 'circleStepThreshold', 0.1, 0.6, 0.01).name('(circle) step thresh')
     .onChange((v) => applyAll((c) => { c.gait.circleStepThreshold = v; }));
   gGroup.add({ reroll() { swarm.rerollExtras(); } }, 'reroll').name('re-randomize extras');
@@ -64,6 +64,7 @@ export function createPanel({ swarm, audio, follow, renderer, bloomPass, outline
     legCount: hero.spec.limbs.length,
     bodyScale: 1, bodyHeight: 0.5, legLength: 1, kneeFrac: 0.45, sprawl: 1, bow: 0.3,
     hairs: true, hairDensity: 1, hairLength: 1, microBump: 1.5,
+    ringCount: 1,
     markType: 'diamond', markAmount: 0.3, markScale: 1,
     bodyColor: '#6b5bb5', legColor: '#c7b3ff',
     toon: false,
@@ -87,6 +88,8 @@ export function createPanel({ swarm, audio, follow, renderer, bloomPass, outline
     fShape.add(buildOpts, 'hairDensity', 0.2, 2, 0.1).name('hair density').onFinishChange(rebuild),
     fShape.add(buildOpts, 'hairLength', 0.3, 2, 0.1).name('hair length').onFinishChange(rebuild),
   ];
+  // Ophanim rings — angel-only; hidden for the spider. See updateTypeUI().
+  const ringsCtrl = fShape.add(buildOpts, 'ringCount', 0, 2, 1).name('rings').onFinishChange(rebuild);
   fShape.add(buildOpts, 'microBump', 0, 2, 0.05).name('micro-bump')
     .onChange((v) => { const ns = hero.render.bodyMat.normalScale; if (ns) ns.set(v, v); });
 
@@ -190,6 +193,14 @@ export function createPanel({ swarm, audio, follow, renderer, bloomPass, outline
   const fBeat = gAudio.addFolder('Beat');
   fBeat.add(audio, 'beatSource', ['auto', 'bass', 'mid', 'treble']).name('beat source').listen();
   fBeat.add(audio, 'sensitivity', 1.05, 3.0, 0.05).name('beat sensitivity');
+  // Max tempo: how fast beats are allowed to fire. Stored as a refractory interval
+  // (s) on the driver; shown here as beats/min (higher = faster beats allowed, but
+  // more prone to the jitter the refractory tames). 0.2s ≈ 300, 0.5s ≈ 120.
+  const beatRate = {
+    get maxTempo() { return Math.round(60 / audio.minBeatInterval); },
+    set maxTempo(v) { audio.minBeatInterval = 60 / v; },
+  };
+  fBeat.add(beatRate, 'maxTempo', 120, 600, 10).name('max tempo (bpm)');
   fBeat.add(audio, 'smoothing', 0, 2, 0.02).name('band smoothing (s)');
   fBeat.add(audio, 'autoBand').name('auto → band').listen().disable();
 
@@ -219,6 +230,7 @@ export function createPanel({ swarm, audio, follow, renderer, bloomPass, outline
   const gLight = gui.addFolder('Lighting');
   const fKey = gLight.addFolder('Key (spotlight)');
   fKey.add(lightRig, 'intensity', 0, 20, 0.1).name('intensity');
+  fKey.addColor({ c: '#ffffff' }, 'c').name('color').onChange((v) => keyLight.color.set(v));
   fKey.add(keyLight, 'angle', 0.1, 1.4, 0.01).name('width');
   fKey.add(keyLight, 'penumbra', 0, 1, 0.01).name('softness');
   fKey.add(lightRig.offset, 'y', 3, 25, 0.5).name('height');
@@ -247,12 +259,27 @@ export function createPanel({ swarm, audio, follow, renderer, bloomPass, outline
   gLook.add(bloomPass, 'threshold', 0.7, 1.0, 0.005).name('bloom threshold');
   gLook.add(lightRig, 'exposure', 0.2, 2, 0.05).name('exposure');
   gLook.add(hero, 'glow', 0, 2, 0.02).name('glow').onChange((v) => applyAll((c) => { c.glow = v; }));
+
+  // --- Stylize: optional full-screen looks / effects ---
+  const fFx = gLook.addFolder('Stylize');
+  fFx.add(afterimagePass, 'enabled').name('motion trails');
+  fFx.add(trail, 'base', 0.5, 0.97, 0.01).name('trail length');
+  fFx.add(trail, 'reactive').name('trails react to audio');
+  fFx.add(posterizePass, 'enabled').name('posterize');
+  fFx.add(posterizePass.uniforms.levels, 'value', 2, 12, 1).name('posterize levels');
+  fFx.add(halftonePass, 'enabled').name('halftone');
+  fFx.add(halftonePass.uniforms.radius, 'value', 1, 12, 0.5).name('halftone dot size');
+  fFx.add(glitchRig, 'onBeat').name('beat glitch');
+  fFx.add(glitchRig, 'intensity', 0, 1.5, 0.05).name('glitch intensity');
+  fFx.close();
+
   addReset(gLook, () => { swarm.setStyleAll(buildOpts.toon, makeHero()); });
 
-  // Show/hide type-specific controls (leg hairs are spider-only for now).
+  // Show/hide type-specific controls: leg hairs are spider-only, rings are angel-only.
   const updateTypeUI = () => {
     const isAngel = groupState.type === 'angel';
     hairCtrls.forEach((c) => c.show(!isAngel));
+    ringsCtrl.show(isAngel);
   };
 
   // Creature-type switch: a segmented Spider | Angel toggle pinned to the top of
@@ -262,6 +289,7 @@ export function createPanel({ swarm, audio, follow, renderer, bloomPass, outline
     groupState.type = v;
     swarm.setType(v, makeHero());
     updateTypeUI();
+    sepCtrl.updateDisplay(); // separation default changed with the type
     if (maxSteppingCtrl) maxSteppingCtrl.updateDisplay();
   });
   updateTypeUI();

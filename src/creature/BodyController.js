@@ -76,7 +76,8 @@ export class BodyController {
     this._bobPos = 0;
     this._bobVel = 0;
     this._stiffness = 90;
-    this._damping = 9;
+    this._damping = 13; // firmer (ζ≈0.7): each beat pops once and settles, instead
+                        // of ringing for ~1s and stacking with the next beat
   }
 
   update(dt, bus) {

@@ -32,7 +32,7 @@ export class AudioDriver {
     this.running = false;
 
     // --- tunable (see ui/Panel.js) ---
-    this.sensitivity = opts.sensitivity ?? 1.4; // onset threshold = running avg * this
+    this.sensitivity = opts.sensitivity ?? 1.2; // onset threshold = running avg * this (lower = more sensitive)
     this.smoothing = opts.smoothing ?? 0.2;     // band smoothing time constant (seconds)
     this.beatSource = opts.beatSource ?? 'auto'; // 'auto' | 'bass' | 'mid' | 'treble'
 
@@ -42,7 +42,10 @@ export class AudioDriver {
     // --- per-band detection state ---
     this._bands = ['bass', 'mid', 'treble'];
     this._historySize = 60;       // ~1s of frames
-    this._minBeatInterval = 0.12; // refractory (s)
+    // Refractory (s) between beats — caps the max rate so loud passages don't
+    // machine-gun the bob into a jitter. Exposed as a "max tempo" slider; lower
+    // interval = higher ceiling (but more jitter-prone). 0.2s ≈ 300 beats/min.
+    this.minBeatInterval = opts.minBeatInterval ?? 0.2;
     this._hist = { bass: [], mid: [], treble: [] };
     this._lastBeat = { bass: -1, mid: -1, treble: -1 };
     this._beatiness = { bass: 0, mid: 0, treble: 0 }; // slow EMA of spike size
@@ -130,8 +133,8 @@ export class AudioDriver {
     if (
       hist.length >= this._historySize &&
       energy > avg * this.sensitivity &&
-      energy > 0.004 &&
-      this._time - this._lastBeat[name] > this._minBeatInterval
+      energy > 0.0015 && // quiet-noise floor (lowered so softer beats still register)
+      this._time - this._lastBeat[name] > this.minBeatInterval
     ) {
       onset = true;
       this._lastBeat[name] = this._time;

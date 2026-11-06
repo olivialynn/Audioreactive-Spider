@@ -116,8 +116,8 @@ export class Creature {
     // Audio-reactive eyes (angel): pupils dilate / sclera glows with the audio.
     this.render.updateEyes(bus, dt);
 
-    // Spin the torso ring (ophanim wheel), if present.
-    if (this.render.ringSpin) this.render.ringSpin.rotation.y += (this.spec.ring?.spin ?? 0) * dt;
+    // Spin the torso rings (ophanim wheels) — each about its own axis, own speed.
+    for (const r of this.render.rings ?? []) r.spin.rotation.y += r.speed * dt;
 
     // 2. Feet decide where/when to step. Dancing in a ring uses an easier
     //    threshold so the small shuffle still lifts feet.
